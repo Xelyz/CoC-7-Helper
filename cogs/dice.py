@@ -45,6 +45,60 @@ class Dice(commands.Cog):
         await interaction.followup.send(f"Roll: {count}d{sides} -> [{detail}] = {total}{suffix}")
 
 
+    @app_commands.command(name="d6", description="Roll d6 N times (default 1)")
+    @app_commands.describe(num="Number of d6 rolls (default 1)")
+    async def d6(self, interaction: discord.Interaction, num: int = 1) -> None:
+        """快捷掷 d6：num 可选，0 视为 1。"""
+        await interaction.response.defer(ephemeral=False)
+
+        count = num if num > 0 else 1
+        sides = 6
+
+        if not (1 <= count <= 100):
+            await interaction.followup.send(
+                "Out of range: require 1 <= num <= 100.", ephemeral=True
+            )
+            return
+
+        rolls = [random.randint(1, sides) for _ in range(count)]
+        total = sum(rolls)
+
+        preview = rolls if len(rolls) <= 50 else (rolls[:50] + ["..."])
+        detail = ", ".join(map(str, preview))
+        suffix = "" if len(rolls) <= 50 else f" (showing first 50 of {len(rolls)} rolls)"
+
+        await interaction.followup.send(
+            f"Roll: {count}d{sides} -> [{detail}] = {total}{suffix}"
+        )
+
+
+    @app_commands.command(name="d20", description="Roll d20 N times (default 1)")
+    @app_commands.describe(num="Number of d20 rolls (default 1)")
+    async def d20(self, interaction: discord.Interaction, num: int = 1) -> None:
+        """快捷掷 d20：num 可选，0 视为 1。"""
+        await interaction.response.defer(ephemeral=False)
+
+        count = num if num > 0 else 1
+        sides = 20
+
+        if not (1 <= count <= 100):
+            await interaction.followup.send(
+                "Out of range: require 1 <= num <= 100.", ephemeral=True
+            )
+            return
+
+        rolls = [random.randint(1, sides) for _ in range(count)]
+        total = sum(rolls)
+
+        preview = rolls if len(rolls) <= 50 else (rolls[:50] + ["..."])
+        detail = ", ".join(map(str, preview))
+        suffix = "" if len(rolls) <= 50 else f" (showing first 50 of {len(rolls)} rolls)"
+
+        await interaction.followup.send(
+            f"Roll: {count}d{sides} -> [{detail}] = {total}{suffix}"
+        )
+
+
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Dice(bot))
     logger.info("Cog 'Dice' loaded")
