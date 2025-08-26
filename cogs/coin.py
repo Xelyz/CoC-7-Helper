@@ -13,8 +13,8 @@ class Coin(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="flip", description="Flip N coins and show results")
-    async def flip(self, interaction: discord.Interaction, coins: int) -> None:
+    @app_commands.command(name="flip", description="Flip N coins (default 1) and show results")
+    async def flip(self, interaction: discord.Interaction, coins: int = 1) -> None:
         """抛掷指定数量的硬币。
 
         - coins 范围限制，避免滥用
