@@ -17,6 +17,12 @@ class General(commands.Cog):
         latency_ms = round(self.bot.latency * 1000)
         await interaction.response.send_message(f"Pong! {latency_ms}ms", ephemeral=True)
 
+    # 文本命令：`.r ping`
+    @commands.command(name="ping", help="Return bot latency (ms). Usage: .r ping")
+    async def ping_text(self, ctx: commands.Context) -> None:
+        latency_ms = round(self.bot.latency * 1000)
+        await ctx.send(f"Pong! {latency_ms}ms")
+
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(General(bot))

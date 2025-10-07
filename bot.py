@@ -21,13 +21,13 @@ logger = logging.getLogger("bot")
 # Intents & Bot 设置（仅 Slash，无前缀）
 # ------------------------------
 intents = discord.Intents.default()
-intents.message_content = False  # 不读取消息内容（仅 Slash）
+intents.message_content = True  # 允许读取消息内容以支持文本前缀（.r ）
 
 
 class RngHelperBot(commands.Bot):
     def __init__(self) -> None:
-        # 仅 Slash：使用提及触发占位前缀，移除默认帮助命令
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
+        # 支持提及与文本前缀“.r ”；移除默认帮助命令
+        super().__init__(command_prefix=commands.when_mentioned_or(".r "), intents=intents, help_command=None)
 
     async def setup_hook(self) -> None:
         """启动前：加载 Cogs 并同步应用命令。"""
