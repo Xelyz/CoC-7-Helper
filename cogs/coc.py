@@ -343,6 +343,33 @@ class CoC(commands.Cog):
         extra = f" | {'; '.join(details)}" if details else ""
         await interaction.followup.send(f"Roll: {expr} -> {total}{extra}")
 
+    @app_commands.command(name="secret", description="Secret roll: NdM or dM; DM result to you and hint in channel")
+    async def secret_slash(self, interaction: discord.Interaction, expr: str) -> None:
+        """与 roll 相同表达式规则，但将结果通过私聊发送给触发者，并在频道内提示一条神秘信息。"""
+        await interaction.response.defer(ephemeral=False)
+        expr = (expr or "").strip()
+        if not expr:
+            await interaction.followup.send("Missing parameter: expr.", ephemeral=True)
+            return
+        try:
+            total, details = self._roll_expression(expr)
+        except ValueError as exc:
+            await interaction.followup.send(str(exc), ephemeral=True)
+            return
+        extra = f" | {'; '.join(details)}" if details else ""
+        # DM result to the user
+        try:
+            await interaction.user.send(f"Secret Roll: {expr} -> {total}{extra}")
+        except Exception as exc:
+            logger.warning("Failed to DM secret roll result: %s", exc)
+            # 作为降级，给出仅自己可见的提示
+            try:
+                await interaction.followup.send("Could not DM you the result. Please enable DMs.", ephemeral=True)
+            except Exception:
+                pass
+        # Post mysterious teaser in channel
+        await interaction.followup.send("Shadows stir... A secret roll has been cast beyond the veil.")
+
     # ---------------- CoC Check Commands ----------------
     @app_commands.command(name="check", description="CoC d100 check by number or your attribute name")
     @app_commands.describe(arg="Positive integer (1-100) or your attribute name")
@@ -622,6 +649,29 @@ class CoC(commands.Cog):
             return
         extra = f" | {'; '.join(details)}" if details else ""
         await ctx.send(f"Roll: {expr} -> {total}{extra}")
+
+    @commands.command(name="secret", help="Secret roll. Usage: .r secret <expr>")
+    async def secret_text(self, ctx: commands.Context, *, expr: str | None = None) -> None:
+        expr = (expr or "").strip()
+        if not expr:
+            await ctx.send("Usage: .r secret <expr>")
+            return
+        try:
+            total, details = self._roll_expression(expr)
+        except ValueError as exc:
+            await ctx.send(str(exc))
+            return
+        extra = f" | {'; '.join(details)}" if details else ""
+        # DM result
+        try:
+            await ctx.author.send(f"Secret Roll: {expr} -> {total}{extra}")
+        except Exception as exc:
+            logger.warning("Failed to DM secret roll result: %s", exc)
+            try:
+                await ctx.author.send("Could not DM you the result. Please enable DMs.")
+            except Exception:
+                pass
+        await ctx.send("Shadows stir... A secret roll has been cast beyond the veil.")
 
     @commands.command(name="stats", help="Show your attributes in this channel. Usage: .r stats")
     async def stats_text(self, ctx: commands.Context) -> None:
