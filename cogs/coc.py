@@ -410,8 +410,16 @@ class CoC(commands.Cog):
             return
         target = max(1, min(100, target))  # clamp to [1,100]
         roll, outcome = self._coc_check(target)
-        uname = user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
-        await interaction.followup.send(f"[{label}] check of {uname}:\n{roll}/{target} -> {outcome}")
+        # 显示名：优先 NAME 属性
+        name_key = self._normalize_attr_name("NAME")[0]
+        name_meta = attrs.get(name_key)
+        if name_meta is not None:
+            display_name = str(name_meta.get("value", "")).strip() or (
+                user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
+            )
+        else:
+            display_name = user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
+        await interaction.followup.send(f"[{label}] check of {display_name}:\n{roll}/{target} -> {outcome}")
 
     @app_commands.command(name="sc", description="Sanity check: input 'succ_expr/fail_expr'")
     @app_commands.describe(loss="Two dice expressions separated by '/', e.g., 1d3/1d10")
@@ -480,6 +488,74 @@ class CoC(commands.Cog):
             f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | SAN: {san_val} -> {new_san}{ti_note}"
         )
 
+    @app_commands.command(name="growth", description="Growth check: input number (1-100) or your attribute name")
+    @app_commands.describe(arg="Positive integer (1-100) or your attribute name")
+    async def growth_slash(self, interaction: discord.Interaction, arg: str) -> None:
+        await interaction.response.defer(ephemeral=False)
+        arg = (arg or "").strip()
+        if not arg:
+            await interaction.followup.send("Missing parameter: arg.", ephemeral=True)
+            return
+        # number path
+        m = re.match(r"^\s*(\d+)\s*$", arg or "")
+        if m:
+            target = int(m.group(1))
+            if not (1 <= target <= 100):
+                await interaction.followup.send("Out of range: require 1 <= target <= 100.", ephemeral=True)
+                return
+            roll, outcome = self._coc_check(target)
+            is_success = outcome in {"critical success", "extreme success", "hard success", "success"}
+            if is_success:
+                await interaction.followup.send(
+                    f"Growth Check: {roll}/{target} -> {outcome}\nGrowth failed (check success)."
+                )
+            else:
+                growth = random.randint(1, 10)
+                await interaction.followup.send(
+                    f"Growth Check: {roll}/{target} -> {outcome}\nGrowth value: 1d10 -> {growth}"
+                )
+            return
+
+        # attribute path (channel+user scoped)
+        channel = interaction.channel
+        user = interaction.user
+        if channel is None or user is None:
+            await interaction.followup.send("Channel or user not found.", ephemeral=True)
+            return
+        attrs = self._get_user_attrs(channel.id, user.id)
+        key, _label_req = self._normalize_attr_name(arg)
+        meta = attrs.get(key)
+        if not meta:
+            await interaction.followup.send("Attribute not found. Use /set or .r set to define it.", ephemeral=True)
+            return
+        label = str(meta.get("label", arg))
+        try:
+            target = int(meta.get("value", 0))
+        except Exception:
+            await interaction.followup.send("Attribute value is invalid.", ephemeral=True)
+            return
+        target = max(1, min(100, target))
+        roll, outcome = self._coc_check(target)
+        # 显示名：优先 NAME 属性
+        name_key = self._normalize_attr_name("NAME")[0]
+        name_meta = attrs.get(name_key)
+        if name_meta is not None:
+            display_name = str(name_meta.get("value", "")).strip() or (
+                user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
+            )
+        else:
+            display_name = user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
+        is_success = outcome in {"critical success", "extreme success", "hard success", "success"}
+        if is_success:
+            await interaction.followup.send(
+                f"[{label}] growth of {display_name}:\n{roll}/{target} -> {outcome}\nGrowth failed."
+            )
+        else:
+            growth = random.randint(1, 10)
+            await interaction.followup.send(
+                f"[{label}] growth of {display_name}:\n{roll}/{target} -> {outcome}\nGrowth value: 1d10 -> {growth}"
+            )
+
     # ---------------- Temporary Insanity (TI) ----------------
     @app_commands.command(name="ti", description="Temporary Insanity: roll 1d10 and show effect")
     async def ti_slash(self, interaction: discord.Interaction) -> None:
@@ -492,6 +568,8 @@ class CoC(commands.Cog):
             return
         name = str(data.get("name", "Unknown")).strip()
         desc = str(data.get("desc", "")).strip()
+        duration = random.randint(1, 10)
+        desc = desc.format(duration=duration)
         await interaction.followup.send(f"TI: {value} - {name}\n{desc}")
 
     # ---------------- CoC Attributes Commands ----------------
@@ -516,7 +594,9 @@ class CoC(commands.Cog):
             )
         else:
             display_name = user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
-        pretty = self._format_stats_columns_block(attrs, columns=3)
+        # 正文中不包含 NAME
+        filtered = {k: v for k, v in attrs.items() if k != self._normalize_attr_name("NAME")[0]}
+        pretty = self._format_stats_columns_block(filtered, columns=3)
         await interaction.followup.send(f"Stats of {display_name}\n{pretty}", ephemeral=True)
 
     @app_commands.command(name="set", description="Batch set your attributes in this channel")
@@ -691,7 +771,9 @@ class CoC(commands.Cog):
             )
         else:
             display_name = author.display_name if isinstance(author, discord.Member) else getattr(author, "name", "user")
-        pretty = self._format_stats_columns_block(attrs, columns=3)
+        # 正文中不包含 NAME
+        filtered = {k: v for k, v in attrs.items() if k != self._normalize_attr_name("NAME")[0]}
+        pretty = self._format_stats_columns_block(filtered, columns=3)
         await ctx.send(f"Stats of {display_name}\n{pretty}")
 
     @commands.command(name="set", help="Batch set attributes. Usage: .r set Name Value, Name2 Value2")
@@ -791,6 +873,8 @@ class CoC(commands.Cog):
             return
         name = str(data.get("name", "Unknown")).strip()
         desc = str(data.get("desc", "")).strip()
+        duration = random.randint(1, 10)
+        desc = desc.format(duration=duration)
         await ctx.send(f"TI: {value} - {name}\n{desc}")
 
     @commands.command(name="nn", help="Set display name in this channel. Usage: .r nn <name>")
@@ -845,8 +929,16 @@ class CoC(commands.Cog):
             return
         target = max(1, min(100, target))
         roll, outcome = self._coc_check(target)
-        uname = ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
-        await ctx.send(f"[{label}] check of {uname}:\n{roll}/{target} -> {outcome}")
+        # 显示名：优先 NAME 属性
+        name_key = self._normalize_attr_name("NAME")[0]
+        name_meta = attrs.get(name_key)
+        if name_meta is not None:
+            display_name = str(name_meta.get("value", "")).strip() or (
+                ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
+            )
+        else:
+            display_name = ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
+        await ctx.send(f"[{label}] check of {display_name}:\n{roll}/{target} -> {outcome}")
 
     @commands.command(name="sc", help="Sanity check. Usage: .r sc succ_expr/fail_expr")
     async def sc_text(self, ctx: commands.Context, *, loss: str | None = None) -> None:
@@ -910,6 +1002,63 @@ class CoC(commands.Cog):
             f"Sanity Check of {display_name}:\n"
             f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | SAN: {san_val} -> {new_san}{ti_note}"
         )
+
+    @commands.command(name="growth", help="Growth check. Usage: .r growth <number|attr name>")
+    async def growth_text(self, ctx: commands.Context, *, arg: str | None = None) -> None:
+        arg = (arg or "").strip()
+        if not arg:
+            await ctx.send("Usage: .r growth <number|attr name>")
+            return
+        # number path
+        m = re.match(r"^\s*(\d+)\s*$", arg)
+        if m:
+            target = int(m.group(1))
+            if not (1 <= target <= 100):
+                await ctx.send("Out of range: require 1 <= target <= 100.")
+                return
+            roll, outcome = self._coc_check(target)
+            is_success = outcome in {"critical success", "extreme success", "hard success", "success"}
+            if is_success:
+                await ctx.send(f"Growth Check: {roll}/{target} -> {outcome}\nGrowth failed (check success).")
+            else:
+                growth = random.randint(1, 10)
+                await ctx.send(f"Growth Check: {roll}/{target} -> {outcome}\nGrowth value: 1d10 -> {growth}")
+            return
+
+        # attribute path
+        channel = ctx.channel
+        author = ctx.author
+        if channel is None or author is None:
+            return
+        attrs = self._get_user_attrs(channel.id, author.id)
+        key, _label_req = self._normalize_attr_name(arg)
+        meta = attrs.get(key)
+        if not meta:
+            await ctx.send("Attribute not found. Use .r set to define it.")
+            return
+        label = str(meta.get("label", arg))
+        try:
+            target = int(meta.get("value", 0))
+        except Exception:
+            await ctx.send("Attribute value is invalid.")
+            return
+        target = max(1, min(100, target))
+        roll, outcome = self._coc_check(target)
+        # 显示名：优先 NAME 属性
+        name_key = self._normalize_attr_name("NAME")[0]
+        name_meta = attrs.get(name_key)
+        if name_meta is not None:
+            display_name = str(name_meta.get("value", "")).strip() or (
+                ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
+            )
+        else:
+            display_name = ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
+        is_success = outcome in {"critical success", "extreme success", "hard success", "success"}
+        if is_success:
+            await ctx.send(f"[{label}] growth of {display_name}:\n{roll}/{target} -> {outcome}\nGrowth failed.")
+        else:
+            growth = random.randint(1, 10)
+            await ctx.send(f"[{label}] growth of {display_name}:\n{roll}/{target} -> {outcome}\nGrowth value: 1d10 -> {growth}")
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(CoC(bot))
