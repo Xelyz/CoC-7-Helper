@@ -445,14 +445,14 @@ class CoC(commands.Cog):
             return
 
         attrs = self._get_user_attrs(channel.id, user.id)
-        san_meta = attrs.get(self._normalize_attr_name("SAN")[0])
+        san_meta = attrs.get(self._normalize_attr_name("Sanity")[0])
         if not san_meta:
-            await interaction.followup.send("Attribute 'SAN' not found. Use /set to define it.", ephemeral=True)
+            await interaction.followup.send("Attribute 'Sanity' not found. Use /set to define it.", ephemeral=True)
             return
         try:
             san_val = int(san_meta.get("value", 0))
         except Exception:
-            await interaction.followup.send("Attribute 'SAN' value is invalid.", ephemeral=True)
+            await interaction.followup.send("Attribute 'Sanity' value is invalid.", ephemeral=True)
             return
         target = max(1, min(100, san_val))
 
@@ -467,7 +467,7 @@ class CoC(commands.Cog):
 
         new_san = max(0, san_val - max(0, loss_total))
         # 回写属性
-        san_key, san_label = self._normalize_attr_name(str(san_meta.get("label", "SAN")))
+        san_key, san_label = self._normalize_attr_name(str(san_meta.get("label", "Sanity")))
         attrs[san_key] = {"label": san_label, "value": int(new_san)}
 
         # 显示名：优先 NAME 属性
@@ -485,7 +485,7 @@ class CoC(commands.Cog):
         ti_note = "\n[Temporary Insanity] Use /ti or .r ti." if loss_total >= 5 else ""
         await interaction.followup.send(
             f"Sanity Check of {display_name}:\n"
-            f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | SAN: {san_val} -> {new_san}{ti_note}"
+            f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | Sanity: {san_val} -> {new_san}{ti_note}"
         )
 
     @app_commands.command(name="growth", description="Growth check: input number (1-100) or your attribute name")
@@ -961,14 +961,14 @@ class CoC(commands.Cog):
         if channel is None or author is None:
             return
         attrs = self._get_user_attrs(channel.id, author.id)
-        san_meta = attrs.get(self._normalize_attr_name("SAN")[0])
+        san_meta = attrs.get(self._normalize_attr_name("Sanity")[0])
         if not san_meta:
-            await ctx.send("Attribute 'SAN' not found. Use .r set to define it.")
+            await ctx.send("Attribute 'Sanity' not found. Use .r set to define it.")
             return
         try:
             san_val = int(san_meta.get("value", 0))
         except Exception:
-            await ctx.send("Attribute 'SAN' value is invalid.")
+            await ctx.send("Attribute 'Sanity' value is invalid.")
             return
         target = max(1, min(100, san_val))
 
@@ -982,7 +982,7 @@ class CoC(commands.Cog):
             return
 
         new_san = max(0, san_val - max(0, loss_total))
-        san_key, san_label = self._normalize_attr_name(str(san_meta.get("label", "SAN")))
+        san_key, san_label = self._normalize_attr_name(str(san_meta.get("label", "Sanity")))
         attrs[san_key] = {"label": san_label, "value": int(new_san)}
 
         # 显示名：优先 NAME 属性
@@ -997,10 +997,10 @@ class CoC(commands.Cog):
 
         outcome = "success" if is_success else "failure"
         extra = f" | {'; '.join(details)}" if details else ""
-        ti_note = "\n[Temporary Insanity] One-time SAN loss >= 5. Use /ti or .r ti." if loss_total >= 5 else ""
+        ti_note = "\n[Temporary Insanity] One-time Sanity loss >= 5. Use /ti or .r ti." if loss_total >= 5 else ""
         await ctx.send(
             f"Sanity Check of {display_name}:\n"
-            f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | SAN: {san_val} -> {new_san}{ti_note}"
+            f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | Sanity: {san_val} -> {new_san}{ti_note}"
         )
 
     @commands.command(name="growth", help="Growth check. Usage: .r growth <number|attr name>")
