@@ -9,6 +9,72 @@ from texts.coc7_texts import TEMP_INSANITY_D10
 logger = logging.getLogger(__name__)
 
 
+class SCButton(discord.ui.View):
+    """可交互的 SC 按钮，用于让其他玩家执行相同的 SC 检定。"""
+    
+    def __init__(self, coc_cog: "CoC", channel_id: int, succ_expr: str, fail_expr: str):
+        super().__init__(timeout=3600)  # 1小时后按钮失效
+        self.coc_cog = coc_cog
+        self.channel_id = channel_id
+        self.succ_expr = succ_expr
+        self.fail_expr = fail_expr
+    
+    @discord.ui.button(label="Sanity Check", style=discord.ButtonStyle.danger, emoji="🎲")
+    async def sc_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """当用户点击按钮时执行 SC 检定。"""
+        user = interaction.user
+        
+        # 获取用户属性
+        attrs = self.coc_cog._get_user_attrs(self.channel_id, user.id)
+        san_meta = attrs.get(self.coc_cog._normalize_attr_name("Sanity")[0])
+        
+        if not san_meta:
+            await interaction.response.send_message(
+                "Attribute 'Sanity' not found. Use .set to define it.",
+                ephemeral=True
+            )
+            return
+        
+        try:
+            san_val = int(san_meta.get("value", 0))
+        except Exception:
+            await interaction.response.send_message(
+                "Attribute 'Sanity' value is invalid.",
+                ephemeral=True
+            )
+            return
+        
+        target = max(1, min(100, san_val))
+        
+        roll = random.randint(1, 100)
+        is_success = roll <= target
+        chosen_expr = self.succ_expr if is_success else self.fail_expr
+        
+        try:
+            loss_total, details = self.coc_cog._roll_expression(chosen_expr)
+        except ValueError as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        
+        new_san = max(0, san_val - max(0, loss_total))
+        san_key, san_label = self.coc_cog._normalize_attr_name(str(san_meta.get("label", "Sanity")))
+        attrs[san_key] = {"label": san_label, "value": int(new_san)}
+        
+        # 显示名：使用统一格式
+        display_name = self.coc_cog._get_display_name(self.channel_id, user)
+        
+        outcome = "success" if is_success else "failure"
+        extra = f" | {'; '.join(details)}" if details else ""
+        ti_note = "\n[Temporary Insanity] One-time Sanity loss >= 5. Use /ti or .ti." if loss_total >= 5 else ""
+        
+        result_msg = (
+            f"Sanity Check of {display_name}:\n"
+            f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | Sanity: {san_val} -> {new_san}{ti_note}"
+        )
+        
+        await interaction.response.send_message(result_msg)
+
+
 class CoC(commands.Cog):
     """掷骰子相关命令：/roll 输入 NdM 或 dM。"""
 
@@ -492,42 +558,54 @@ class CoC(commands.Cog):
             await interaction.followup.send("Invalid format. Both parts required: 'succ_expr/fail_expr'.", ephemeral=True)
             return
 
-        attrs = self._get_user_attrs(channel.id, user.id)
-        san_meta = attrs.get(self._normalize_attr_name("Sanity")[0])
-        if not san_meta:
-            await interaction.followup.send("Attribute 'Sanity' not found. Use /set to define it.", ephemeral=True)
-            return
-        try:
-            san_val = int(san_meta.get("value", 0))
-        except Exception:
-            await interaction.followup.send("Attribute 'Sanity' value is invalid.", ephemeral=True)
-            return
-        target = max(1, min(100, san_val))
+        # 检查是否是 KP 执行的命令
+        is_kp = self._channel_kp.get(channel.id) == user.id
+        
+        if is_kp:
+            # KP 执行时，只发起检定，不对自己判定
+            view = SCButton(self, channel.id, succ_expr, fail_expr)
+            prompt_msg = f"**KP initiates SC check:** `{succ_expr}/{fail_expr}`\nClick the button below to perform the check:"
+            await interaction.followup.send(prompt_msg, view=view)
+        else:
+            # 非 KP 执行时，对自己进行判定
+            attrs = self._get_user_attrs(channel.id, user.id)
+            san_meta = attrs.get(self._normalize_attr_name("Sanity")[0])
+            if not san_meta:
+                await interaction.followup.send("Attribute 'Sanity' not found. Use /set to define it.", ephemeral=True)
+                return
+            try:
+                san_val = int(san_meta.get("value", 0))
+            except Exception:
+                await interaction.followup.send("Attribute 'Sanity' value is invalid.", ephemeral=True)
+                return
+            target = max(1, min(100, san_val))
 
-        roll = random.randint(1, 100)
-        is_success = roll <= target
-        chosen_expr = succ_expr if is_success else fail_expr
-        try:
-            loss_total, details = self._roll_expression(chosen_expr)
-        except ValueError as exc:
-            await interaction.followup.send(str(exc), ephemeral=True)
-            return
+            roll = random.randint(1, 100)
+            is_success = roll <= target
+            chosen_expr = succ_expr if is_success else fail_expr
+            try:
+                loss_total, details = self._roll_expression(chosen_expr)
+            except ValueError as exc:
+                await interaction.followup.send(str(exc), ephemeral=True)
+                return
 
-        new_san = max(0, san_val - max(0, loss_total))
-        # 回写属性
-        san_key, san_label = self._normalize_attr_name(str(san_meta.get("label", "Sanity")))
-        attrs[san_key] = {"label": san_label, "value": int(new_san)}
+            new_san = max(0, san_val - max(0, loss_total))
+            # 回写属性
+            san_key, san_label = self._normalize_attr_name(str(san_meta.get("label", "Sanity")))
+            attrs[san_key] = {"label": san_label, "value": int(new_san)}
 
-        # 显示名：使用统一格式
-        display_name = self._get_display_name(channel.id, user)
+            # 显示名：使用统一格式
+            display_name = self._get_display_name(channel.id, user)
 
-        outcome = "success" if is_success else "failure"
-        extra = f" | {'; '.join(details)}" if details else ""
-        ti_note = "\n[Temporary Insanity] Use /ti or .ti." if loss_total >= 5 else ""
-        await interaction.followup.send(
-            f"Sanity Check of {display_name}:\n"
-            f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | Sanity: {san_val} -> {new_san}{ti_note}"
-        )
+            outcome = "success" if is_success else "failure"
+            extra = f" | {'; '.join(details)}" if details else ""
+            ti_note = "\n[Temporary Insanity] Use /ti or .ti." if loss_total >= 5 else ""
+            
+            result_msg = (
+                f"Sanity Check of {display_name}:\n"
+                f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | Sanity: {san_val} -> {new_san}{ti_note}"
+            )
+            await interaction.followup.send(result_msg)
 
     @app_commands.command(name="growth", description="Growth check: input number (1-100) or your attribute name")
     @app_commands.describe(arg="Positive integer (1-100) or your attribute name")
@@ -712,7 +790,7 @@ class CoC(commands.Cog):
             await interaction.followup.send("No attributes to reset.", ephemeral=True)
 
     @app_commands.command(name="remove", description="Remove attributes from your stats")
-    @app_commands.describe(items="Comma-separated attribute names to remove, e.g., 'HP, MP, 临时技能'")
+    @app_commands.describe(items="Comma-separated attribute names to remove, e.g., 'HP, MP, STR'")
     async def remove_slash(self, interaction: discord.Interaction, items: str) -> None:
         await interaction.response.defer(ephemeral=True)
         channel = interaction.channel
@@ -812,6 +890,28 @@ class CoC(commands.Cog):
         else:
             store[key] = {"label": label, "value": name}
             await interaction.followup.send(f"Name set to: {name}", ephemeral=True)
+
+    @app_commands.command(name="kp", description="Register as KP (Keeper) in this channel")
+    async def kp_slash(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=False)
+        channel = interaction.channel
+        user = interaction.user
+        if channel is None or user is None:
+            await interaction.followup.send("Channel or user not found.", ephemeral=True)
+            return
+        
+        # 检查当前频道是否已有 KP
+        current_kp_id = self._channel_kp.get(channel.id)
+        if current_kp_id is not None:
+            if current_kp_id == user.id:
+                await interaction.followup.send("You are already the KP of this channel.", ephemeral=True)
+            else:
+                await interaction.followup.send("Error: This channel already has a KP. Only one KP per channel is allowed.", ephemeral=True)
+            return
+        
+        # 注册为 KP
+        self._channel_kp[channel.id] = user.id
+        await interaction.followup.send(f"{user.mention} is now the KP of this channel.")
 
     # 文本命令：`.roll 2d6` 或 `.roll d20`
     @commands.command(name="roll", aliases=["r"], help="Roll dice: NdM or dM. Usage: .roll 2d6 or .r 2d6")
@@ -1120,8 +1220,7 @@ class CoC(commands.Cog):
         
         # 注册为 KP
         self._channel_kp[channel.id] = author.id
-        display_name = self._get_display_name(channel.id, author)
-        await ctx.send(f"{display_name} is now the KP of this channel.")
+        await ctx.send(f"{author.mention} is now the KP of this channel.")
 
     # 文本命令：`.check 60`
     @commands.command(name="check", aliases=["ra"], help="CoC d100 check. Usage: .check <number|attr name> or .ra <number|attr name>. Support @mention")
@@ -1180,18 +1279,14 @@ class CoC(commands.Cog):
         
         await ctx.send("\n\n".join(results))
 
-    @commands.command(name="sc", help="Sanity check. Usage: .sc succ_expr/fail_expr. Support @mention")
+    @commands.command(name="sc", help="Sanity check. Usage: .sc succ_expr/fail_expr")
     async def sc_text(self, ctx: commands.Context, *, loss: str | None = None) -> None:
         loss = (loss or "").strip()
         if not loss:
             await ctx.send("Usage: .sc succ_expr/fail_expr")
             return
         
-        # 提取 mentions 并清理参数
-        mentions, cleaned_loss = self._extract_mentions_and_clean_arg(ctx, loss)
-        target_users = mentions if mentions else [ctx.author]
-        
-        parts = cleaned_loss.split("/", 1)
+        parts = loss.split("/", 1)
         if len(parts) != 2:
             await ctx.send("Invalid format. Use 'succ_expr/fail_expr'.")
             return
@@ -1202,24 +1297,30 @@ class CoC(commands.Cog):
             return
 
         channel = ctx.channel
-        if channel is None:
+        author = ctx.author
+        if channel is None or author is None:
             return
         
-        # 对每个目标用户执行理智检定
-        results = []
-        for user in target_users:
-            attrs = self._get_user_attrs(channel.id, user.id)
+        # 检查是否是 KP 执行的命令
+        is_kp = self._channel_kp.get(channel.id) == author.id
+        
+        if is_kp:
+            # KP 执行时，只发起检定，不对自己判定
+            view = SCButton(self, channel.id, succ_expr, fail_expr)
+            prompt_msg = f"**KP initiates SC check:** `{succ_expr}/{fail_expr}`\nClick the button below to perform the check:"
+            await ctx.send(prompt_msg, view=view)
+        else:
+            # 非 KP 执行时，对自己进行判定
+            attrs = self._get_user_attrs(channel.id, author.id)
             san_meta = attrs.get(self._normalize_attr_name("Sanity")[0])
             if not san_meta:
-                user_display = self._get_display_name(channel.id, user)
-                results.append(f"{user_display}: Attribute 'Sanity' not found. Use .set to define it.")
-                continue
+                await ctx.send("Attribute 'Sanity' not found. Use .set to define it.")
+                return
             try:
                 san_val = int(san_meta.get("value", 0))
             except Exception:
-                user_display = self._get_display_name(channel.id, user)
-                results.append(f"{user_display}: Attribute 'Sanity' value is invalid.")
-                continue
+                await ctx.send("Attribute 'Sanity' value is invalid.")
+                return
             target = max(1, min(100, san_val))
 
             roll = random.randint(1, 100)
@@ -1228,26 +1329,25 @@ class CoC(commands.Cog):
             try:
                 loss_total, details = self._roll_expression(chosen_expr)
             except ValueError as exc:
-                user_display = self._get_display_name(channel.id, user)
-                results.append(f"{user_display}: {str(exc)}")
-                continue
+                await ctx.send(str(exc))
+                return
 
             new_san = max(0, san_val - max(0, loss_total))
             san_key, san_label = self._normalize_attr_name(str(san_meta.get("label", "Sanity")))
             attrs[san_key] = {"label": san_label, "value": int(new_san)}
 
             # 显示名：使用统一格式
-            display_name = self._get_display_name(channel.id, user)
+            display_name = self._get_display_name(channel.id, author)
 
             outcome = "success" if is_success else "failure"
             extra = f" | {'; '.join(details)}" if details else ""
             ti_note = "\n[Temporary Insanity] One-time Sanity loss >= 5. Use /ti or .ti." if loss_total >= 5 else ""
-            results.append(
+            
+            result_msg = (
                 f"Sanity Check of {display_name}:\n"
                 f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | Sanity: {san_val} -> {new_san}{ti_note}"
             )
-        
-        await ctx.send("\n\n".join(results))
+            await ctx.send(result_msg)
 
     @commands.command(name="growth", help="Growth check. Usage: .growth <number|attr name>. Support @mention")
     async def growth_text(self, ctx: commands.Context, *, arg: str | None = None) -> None:
