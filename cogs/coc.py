@@ -20,13 +20,22 @@ class CoC(commands.Cog):
             self.bot._coc_channel_player_stats = {}
         # 直接引用，不复制
         self._channel_player_stats = self.bot._coc_channel_player_stats  # type: ignore[attr-defined]
+        
+        # KP 缓存：channel_id -> user_id
+        if not hasattr(self.bot, "_coc_channel_kp"):
+            self.bot._coc_channel_kp = {}
+        self._channel_kp = self.bot._coc_channel_kp  # type: ignore[attr-defined]
 
     # ---------------- Helpers (private) ----------------
     def _get_display_name(self, channel_id: int, user: discord.Member | discord.User) -> str:
         """统一获取用户显示名：优先使用 .nn 设置的 NAME，否则使用 Discord 显示名。
         
+        对于 KP，显示为 "KP" 或 "KP(名字)"。
         返回用户的显示名称。
         """
+        # 检查是否是 KP
+        is_kp = self._channel_kp.get(channel_id) == user.id
+        
         # 尝试从属性中获取 NAME
         attrs = self._get_user_attrs(channel_id, user.id)
         name_key = self._normalize_attr_name("NAME")[0]
@@ -35,7 +44,14 @@ class CoC(commands.Cog):
         if name_meta is not None:
             custom_name = str(name_meta.get("value", "")).strip()
             if custom_name:
+                # KP 显示为 "KP(名字)"
+                if is_kp:
+                    return f"KP({custom_name})"
                 return custom_name
+        
+        # KP 没有设置 nn 时，显示为 "KP"
+        if is_kp:
+            return "KP"
         
         # 降级：使用 Discord 显示名
         if isinstance(user, discord.Member):
@@ -685,7 +701,12 @@ class CoC(commands.Cog):
             await interaction.followup.send("Channel or user not found.", ephemeral=True)
             return
         ok = self._reset_user_attrs(channel.id, user.id)
-        if ok:
+        
+        # 如果是 KP 执行 reset，清空 KP 位
+        if self._channel_kp.get(channel.id) == user.id:
+            del self._channel_kp[channel.id]
+            await interaction.followup.send("Reset done. KP position cleared.", ephemeral=True)
+        elif ok:
             await interaction.followup.send("Reset done.", ephemeral=True)
         else:
             await interaction.followup.send("No attributes to reset.", ephemeral=True)
@@ -765,7 +786,7 @@ class CoC(commands.Cog):
         await interaction.followup.send(pretty)
 
     @app_commands.command(name="nn", description="Set your display name in this channel")
-    @app_commands.describe(name="Your name to show in stats")
+    @app_commands.describe(name="Your name to show in stats, or 'clear' to remove")
     async def nn_slash(self, interaction: discord.Interaction, name: str) -> None:
         await interaction.response.defer(ephemeral=True)
         channel = interaction.channel
@@ -777,10 +798,20 @@ class CoC(commands.Cog):
         if not name:
             await interaction.followup.send("Missing parameter: name.", ephemeral=True)
             return
+        
         store = self._get_user_attrs(channel.id, user.id)
         key, label = self._normalize_attr_name("NAME")
-        store[key] = {"label": label, "value": name}
-        await interaction.followup.send(f"Name set to: {name}", ephemeral=True)
+        
+        # 检查是否是 clear 命令
+        if name.lower() == "clear":
+            if key in store:
+                del store[key]
+                await interaction.followup.send("Name cleared.", ephemeral=True)
+            else:
+                await interaction.followup.send("No name to clear.", ephemeral=True)
+        else:
+            store[key] = {"label": label, "value": name}
+            await interaction.followup.send(f"Name set to: {name}", ephemeral=True)
 
     # 文本命令：`.roll 2d6` 或 `.roll d20`
     @commands.command(name="roll", aliases=["r"], help="Roll dice: NdM or dM. Usage: .roll 2d6 or .r 2d6")
@@ -939,7 +970,12 @@ class CoC(commands.Cog):
         if channel is None or author is None:
             return
         ok = self._reset_user_attrs(channel.id, author.id)
-        if ok:
+        
+        # 如果是 KP 执行 reset，清空 KP 位
+        if self._channel_kp.get(channel.id) == author.id:
+            del self._channel_kp[channel.id]
+            await ctx.send("Reset done. KP position cleared.")
+        elif ok:
             await ctx.send("Reset done.")
         else:
             await ctx.send("No attributes to reset.")
@@ -1031,7 +1067,7 @@ class CoC(commands.Cog):
         desc = desc.format(duration=duration)
         await ctx.send(f"TI: {value} - {name}\n{desc}")
 
-    @commands.command(name="nn", help="Set display name in this channel. Usage: .nn <name>")
+    @commands.command(name="nn", help="Set display name in this channel. Usage: .nn <name> or .nn clear")
     async def nn_text(self, ctx: commands.Context, *, name: str | None = None) -> None:
         channel = ctx.channel
         author = ctx.author
@@ -1039,7 +1075,7 @@ class CoC(commands.Cog):
             return
         name = (name or "").strip()
         if not name:
-            await ctx.send("Usage: .nn <name>")
+            await ctx.send("Usage: .nn <name> or .nn clear")
             return
         
         # 检查是否包含 mention，如果有则报错
@@ -1049,8 +1085,43 @@ class CoC(commands.Cog):
         
         store = self._get_user_attrs(channel.id, author.id)
         key, label = self._normalize_attr_name("NAME")
-        store[key] = {"label": label, "value": name}
-        await ctx.send(f"Name set to: {name}")
+        
+        # 检查是否是 clear 命令
+        if name.lower() == "clear":
+            if key in store:
+                del store[key]
+                await ctx.send("Name cleared.")
+            else:
+                await ctx.send("No name to clear.")
+        else:
+            store[key] = {"label": label, "value": name}
+            await ctx.send(f"Name set to: {name}")
+
+    @commands.command(name="kp", help="Register as KP (Keeper) in this channel. Usage: .kp")
+    async def kp_text(self, ctx: commands.Context, *, arg: str | None = None) -> None:
+        channel = ctx.channel
+        author = ctx.author
+        if channel is None or author is None:
+            return
+        
+        # 不接受任何参数
+        if arg and arg.strip():
+            await ctx.send("Error: .kp command does not accept any parameters.")
+            return
+        
+        # 检查当前频道是否已有 KP
+        current_kp_id = self._channel_kp.get(channel.id)
+        if current_kp_id is not None:
+            if current_kp_id == author.id:
+                await ctx.send("You are already the KP of this channel.")
+            else:
+                await ctx.send("Error: This channel already has a KP. Only one KP per channel is allowed.")
+            return
+        
+        # 注册为 KP
+        self._channel_kp[channel.id] = author.id
+        display_name = self._get_display_name(channel.id, author)
+        await ctx.send(f"{display_name} is now the KP of this channel.")
 
     # 文本命令：`.check 60`
     @commands.command(name="check", aliases=["ra"], help="CoC d100 check. Usage: .check <number|attr name> or .ra <number|attr name>. Support @mention")
