@@ -27,7 +27,7 @@ intents.message_content = True  # 允许读取消息内容以支持文本前缀�
 class RngHelperBot(commands.Bot):
     def __init__(self) -> None:
         # 支持提及与文本前缀“.r ”；移除默认帮助命令
-        super().__init__(command_prefix=commands.when_mentioned_or(".r "), intents=intents, help_command=None)
+        super().__init__(command_prefix=commands.when_mentioned_or("."), intents=intents, help_command=None)
 
     async def setup_hook(self) -> None:
         """启动前：加载 Cogs 并同步应用命令。"""

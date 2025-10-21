@@ -400,7 +400,7 @@ class CoC(commands.Cog):
         key, _label_req = self._normalize_attr_name(arg)
         meta = attrs.get(key)
         if not meta:
-            await interaction.followup.send("Attribute not found. Use /set or .r set to define it.", ephemeral=True)
+            await interaction.followup.send("Attribute not found. Use /set or .set to define it.", ephemeral=True)
             return
         label = str(meta.get("label", arg))
         try:
@@ -482,7 +482,7 @@ class CoC(commands.Cog):
 
         outcome = "success" if is_success else "failure"
         extra = f" | {'; '.join(details)}" if details else ""
-        ti_note = "\n[Temporary Insanity] Use /ti or .r ti." if loss_total >= 5 else ""
+        ti_note = "\n[Temporary Insanity] Use /ti or .ti." if loss_total >= 5 else ""
         await interaction.followup.send(
             f"Sanity Check of {display_name}:\n"
             f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | Sanity: {san_val} -> {new_san}{ti_note}"
@@ -526,7 +526,7 @@ class CoC(commands.Cog):
         key, _label_req = self._normalize_attr_name(arg)
         meta = attrs.get(key)
         if not meta:
-            await interaction.followup.send("Attribute not found. Use /set or .r set to define it.", ephemeral=True)
+            await interaction.followup.send("Attribute not found. Use /set or .set to define it.", ephemeral=True)
             return
         label = str(meta.get("label", arg))
         try:
@@ -715,12 +715,12 @@ class CoC(commands.Cog):
         store[key] = {"label": label, "value": name}
         await interaction.followup.send(f"Name set to: {name}", ephemeral=True)
 
-    # 文本命令：`.r roll 2d6` 或 `.r roll d20`
-    @commands.command(name="roll", help="Roll dice: NdM or dM. Usage: .r roll 2d6")
+    # 文本命令：`.roll 2d6` 或 `.roll d20`
+    @commands.command(name="roll", aliases=["r"], help="Roll dice: NdM or dM. Usage: .roll 2d6 or .r 2d6")
     async def roll_text(self, ctx: commands.Context, *, expr: str | None = None) -> None:
         expr = (expr or "").strip()
         if not expr:
-            await ctx.send("Usage: .r roll <expr>")
+            await ctx.send("Usage: .roll <expr> or .r <expr>")
             return
         try:
             total, details = self._roll_expression(expr)
@@ -730,11 +730,11 @@ class CoC(commands.Cog):
         extra = f" | {'; '.join(details)}" if details else ""
         await ctx.send(f"Roll: {expr} -> {total}{extra}")
 
-    @commands.command(name="secret", help="Secret roll. Usage: .r secret <expr>")
+    @commands.command(name="secret", help="Secret roll. Usage: .secret <expr>")
     async def secret_text(self, ctx: commands.Context, *, expr: str | None = None) -> None:
         expr = (expr or "").strip()
         if not expr:
-            await ctx.send("Usage: .r secret <expr>")
+            await ctx.send("Usage: .secret <expr>")
             return
         try:
             total, details = self._roll_expression(expr)
@@ -753,7 +753,7 @@ class CoC(commands.Cog):
                 pass
         await ctx.send("Shadows stir... A secret roll has been cast beyond the veil.")
 
-    @commands.command(name="stats", help="Show your attributes in this channel. Usage: .r stats")
+    @commands.command(name="stats", help="Show your attributes in this channel. Usage: .stats")
     async def stats_text(self, ctx: commands.Context) -> None:
         channel = ctx.channel
         author = ctx.author
@@ -776,7 +776,7 @@ class CoC(commands.Cog):
         pretty = self._format_stats_columns_block(filtered, columns=3)
         await ctx.send(f"Stats of {display_name}\n{pretty}")
 
-    @commands.command(name="set", help="Batch set attributes. Usage: .r set Name Value, Name2 Value2")
+    @commands.command(name="set", help="Batch set attributes. Usage: .set Name Value, Name2 Value2")
     async def set_text(self, ctx: commands.Context, *, items: str | None = None) -> None:
         channel = ctx.channel
         author = ctx.author
@@ -801,7 +801,7 @@ class CoC(commands.Cog):
         summary = ", ".join([f"{self._normalize_attr_name(n)[1]}={int(v)}" for n, v in pairs])
         await ctx.send(f"Set: {summary}")
 
-    @commands.command(name="add", help="Batch add deltas. Usage: .r add Name Delta, Name2 Delta2")
+    @commands.command(name="add", help="Batch add deltas. Usage: .add Name Delta, Name2 Delta2")
     async def add_text(self, ctx: commands.Context, *, items: str | None = None) -> None:
         channel = ctx.channel
         author = ctx.author
@@ -836,7 +836,7 @@ class CoC(commands.Cog):
         summary = ", ".join(summary_items)
         await ctx.send(f"Add: {summary}")
 
-    @commands.command(name="reset", help="Reset your attributes in this channel. Usage: .r reset")
+    @commands.command(name="reset", help="Reset your attributes in this channel. Usage: .reset")
     async def reset_text(self, ctx: commands.Context) -> None:
         channel = ctx.channel
         author = ctx.author
@@ -848,7 +848,7 @@ class CoC(commands.Cog):
         else:
             await ctx.send("No attributes to reset.")
 
-    @commands.command(name="cs", help="Generate CoC7 base attributes and totals. Usage: .r cs")
+    @commands.command(name="cs", help="Generate CoC7 base attributes and totals. Usage: .cs")
     async def cs_text(self, ctx: commands.Context) -> None:
         channel = ctx.channel
         author = ctx.author
@@ -863,7 +863,7 @@ class CoC(commands.Cog):
         pretty = self._format_coc7_attrs_block(rolled)
         await ctx.send(pretty)
 
-    @commands.command(name="ti", help="Temporary Insanity: roll 1d10 and show effect. Usage: .r ti")
+    @commands.command(name="ti", help="Temporary Insanity: roll 1d10 and show effect. Usage: .ti")
     async def ti_text(self, ctx: commands.Context) -> None:
         value = random.randint(1, 10)
         data = TEMP_INSANITY_D10.get(value)
@@ -877,7 +877,7 @@ class CoC(commands.Cog):
         desc = desc.format(duration=duration)
         await ctx.send(f"TI: {value} - {name}\n{desc}")
 
-    @commands.command(name="nn", help="Set display name in this channel. Usage: .r nn <name>")
+    @commands.command(name="nn", help="Set display name in this channel. Usage: .nn <name>")
     async def nn_text(self, ctx: commands.Context, *, name: str | None = None) -> None:
         channel = ctx.channel
         author = ctx.author
@@ -885,19 +885,19 @@ class CoC(commands.Cog):
             return
         name = (name or "").strip()
         if not name:
-            await ctx.send("Usage: .r nn <name>")
+            await ctx.send("Usage: .nn <name>")
             return
         store = self._get_user_attrs(channel.id, author.id)
         key, label = self._normalize_attr_name("NAME")
         store[key] = {"label": label, "value": name}
         await ctx.send(f"Name set to: {name}")
 
-    # 文本命令：`.r check 60`
-    @commands.command(name="check", help="CoC d100 check. Usage: .r check <number|attr name>")
+    # 文本命令：`.check 60`
+    @commands.command(name="check", aliases=["ra"], help="CoC d100 check. Usage: .check <number|attr name> or .ra <number|attr name>")
     async def coc_check_text(self, ctx: commands.Context, *, arg: str | None = None) -> None:
         arg = (arg or "").strip()
         if not arg:
-            await ctx.send("Usage: .r check <number|attr name>")
+            await ctx.send("Usage: .check <number|attr name> or .ra <number|attr name>")
             return
         # number path
         m = re.match(r"^\s*(\d+)\s*$", arg)
@@ -919,7 +919,7 @@ class CoC(commands.Cog):
         key, _label_req = self._normalize_attr_name(arg)
         meta = attrs.get(key)
         if not meta:
-            await ctx.send("Attribute not found. Use .r set to define it.")
+            await ctx.send("Attribute not found. Use .set to define it.")
             return
         label = str(meta.get("label", arg))
         try:
@@ -940,11 +940,11 @@ class CoC(commands.Cog):
             display_name = ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
         await ctx.send(f"[{label}] check of {display_name}:\n{roll}/{target} -> {outcome}")
 
-    @commands.command(name="sc", help="Sanity check. Usage: .r sc succ_expr/fail_expr")
+    @commands.command(name="sc", help="Sanity check. Usage: .sc succ_expr/fail_expr")
     async def sc_text(self, ctx: commands.Context, *, loss: str | None = None) -> None:
         loss = (loss or "").strip()
         if not loss:
-            await ctx.send("Usage: .r sc succ_expr/fail_expr")
+            await ctx.send("Usage: .sc succ_expr/fail_expr")
             return
         parts = loss.split("/", 1)
         if len(parts) != 2:
@@ -963,7 +963,7 @@ class CoC(commands.Cog):
         attrs = self._get_user_attrs(channel.id, author.id)
         san_meta = attrs.get(self._normalize_attr_name("Sanity")[0])
         if not san_meta:
-            await ctx.send("Attribute 'Sanity' not found. Use .r set to define it.")
+            await ctx.send("Attribute 'Sanity' not found. Use .set to define it.")
             return
         try:
             san_val = int(san_meta.get("value", 0))
@@ -997,17 +997,17 @@ class CoC(commands.Cog):
 
         outcome = "success" if is_success else "failure"
         extra = f" | {'; '.join(details)}" if details else ""
-        ti_note = "\n[Temporary Insanity] One-time Sanity loss >= 5. Use /ti or .r ti." if loss_total >= 5 else ""
+        ti_note = "\n[Temporary Insanity] One-time Sanity loss >= 5. Use /ti or .ti." if loss_total >= 5 else ""
         await ctx.send(
             f"Sanity Check of {display_name}:\n"
             f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | Sanity: {san_val} -> {new_san}{ti_note}"
         )
 
-    @commands.command(name="growth", help="Growth check. Usage: .r growth <number|attr name>")
+    @commands.command(name="growth", help="Growth check. Usage: .growth <number|attr name>")
     async def growth_text(self, ctx: commands.Context, *, arg: str | None = None) -> None:
         arg = (arg or "").strip()
         if not arg:
-            await ctx.send("Usage: .r growth <number|attr name>")
+            await ctx.send("Usage: .growth <number|attr name>")
             return
         # number path
         m = re.match(r"^\s*(\d+)\s*$", arg)
@@ -1019,10 +1019,10 @@ class CoC(commands.Cog):
             roll, outcome = self._coc_check(target)
             is_success = outcome in {"critical success", "extreme success", "hard success", "success"}
             if is_success:
-                await ctx.send(f"Growth Check: {roll}/{target} -> {outcome}\nGrowth failed (check success).")
+                await ctx.send(f"Growth Check: {roll}/{target} -> Failed")
             else:
                 growth = random.randint(1, 10)
-                await ctx.send(f"Growth Check: {roll}/{target} -> {outcome}\nGrowth value: 1d10 -> {growth}")
+                await ctx.send(f"Growth Check: {roll}/{target} -> Passed \nGrowth value: 1d10 -> {growth}")
             return
 
         # attribute path
@@ -1034,7 +1034,7 @@ class CoC(commands.Cog):
         key, _label_req = self._normalize_attr_name(arg)
         meta = attrs.get(key)
         if not meta:
-            await ctx.send("Attribute not found. Use .r set to define it.")
+            await ctx.send("Attribute not found. Use .set to define it.")
             return
         label = str(meta.get("label", arg))
         try:
