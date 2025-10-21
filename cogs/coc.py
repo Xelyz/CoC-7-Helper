@@ -22,6 +22,45 @@ class CoC(commands.Cog):
         self._channel_player_stats = self.bot._coc_channel_player_stats  # type: ignore[attr-defined]
 
     # ---------------- Helpers (private) ----------------
+    def _get_display_name(self, channel_id: int, user: discord.Member | discord.User) -> str:
+        """统一获取用户显示名：优先使用 .nn 设置的 NAME，否则使用 Discord 显示名。
+        
+        返回用户的显示名称。
+        """
+        # 尝试从属性中获取 NAME
+        attrs = self._get_user_attrs(channel_id, user.id)
+        name_key = self._normalize_attr_name("NAME")[0]
+        name_meta = attrs.get(name_key)
+        
+        if name_meta is not None:
+            custom_name = str(name_meta.get("value", "")).strip()
+            if custom_name:
+                return custom_name
+        
+        # 降级：使用 Discord 显示名
+        if isinstance(user, discord.Member):
+            return user.display_name
+        return getattr(user, "name", "user")
+    
+    def _extract_mentions_and_clean_arg(self, ctx: commands.Context, arg: str) -> tuple[list[discord.Member | discord.User], str]:
+        """从参数中提取被 @ 的用户，并返回清理后的参数字符串。
+        
+        返回 (目标用户列表, 清理后的参数)。
+        如果没有 @，返回空列表和原参数。
+        """
+        mentions = ctx.message.mentions
+        if not mentions:
+            return [], arg
+        
+        # 移除所有 mention 标记，保留其他参数
+        cleaned = arg
+        for user in mentions:
+            # Discord mention 格式：<@USER_ID> 或 <@!USER_ID>
+            cleaned = re.sub(rf'<@!?{user.id}>', '', cleaned)
+        
+        cleaned = cleaned.strip()
+        return mentions, cleaned
+
     def _parse_expr(self, expr: str) -> tuple[int, int] | None:
         text = (expr or "").strip()
         m = re.match(r"^\s*(\d*)\s*d\s*(\d+)\s*$", text, re.IGNORECASE)
@@ -410,15 +449,8 @@ class CoC(commands.Cog):
             return
         target = max(1, min(100, target))  # clamp to [1,100]
         roll, outcome = self._coc_check(target)
-        # 显示名：优先 NAME 属性
-        name_key = self._normalize_attr_name("NAME")[0]
-        name_meta = attrs.get(name_key)
-        if name_meta is not None:
-            display_name = str(name_meta.get("value", "")).strip() or (
-                user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
-            )
-        else:
-            display_name = user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
+        # 显示名：使用统一格式
+        display_name = self._get_display_name(channel.id, user)
         await interaction.followup.send(f"[{label}] check of {display_name}:\n{roll}/{target} -> {outcome}")
 
     @app_commands.command(name="sc", description="Sanity check: input 'succ_expr/fail_expr'")
@@ -470,15 +502,8 @@ class CoC(commands.Cog):
         san_key, san_label = self._normalize_attr_name(str(san_meta.get("label", "Sanity")))
         attrs[san_key] = {"label": san_label, "value": int(new_san)}
 
-        # 显示名：优先 NAME 属性
-        name_key = self._normalize_attr_name("NAME")[0]
-        name_meta = attrs.get(name_key)
-        if name_meta is not None:
-            display_name = str(name_meta.get("value", "")).strip() or (
-                user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
-            )
-        else:
-            display_name = user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
+        # 显示名：使用统一格式
+        display_name = self._get_display_name(channel.id, user)
 
         outcome = "success" if is_success else "failure"
         extra = f" | {'; '.join(details)}" if details else ""
@@ -536,15 +561,8 @@ class CoC(commands.Cog):
             return
         target = max(1, min(100, target))
         roll, outcome = self._coc_check(target)
-        # 显示名：优先 NAME 属性
-        name_key = self._normalize_attr_name("NAME")[0]
-        name_meta = attrs.get(name_key)
-        if name_meta is not None:
-            display_name = str(name_meta.get("value", "")).strip() or (
-                user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
-            )
-        else:
-            display_name = user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
+        # 显示名：使用统一格式
+        display_name = self._get_display_name(channel.id, user)
         is_success = outcome in {"critical success", "extreme success", "hard success", "success"}
         if is_success:
             await interaction.followup.send(
@@ -585,15 +603,8 @@ class CoC(commands.Cog):
         if not attrs:
             await interaction.followup.send("No attributes set.", ephemeral=True)
             return
-        # 读取显示名：优先 NAME 属性，否则使用 Discord 名称
-        name_key = self._normalize_attr_name("NAME")[0]
-        name_meta = attrs.get(name_key)
-        if name_meta is not None:
-            display_name = str(name_meta.get("value", "")).strip() or (
-                user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
-            )
-        else:
-            display_name = user.display_name if isinstance(user, discord.Member) else getattr(user, "name", "user")
+        # 显示名：使用统一格式
+        display_name = self._get_display_name(channel.id, user)
         # 正文中不包含 NAME
         filtered = {k: v for k, v in attrs.items() if k != self._normalize_attr_name("NAME")[0]}
         pretty = self._format_stats_columns_block(filtered, columns=3)
@@ -679,6 +690,62 @@ class CoC(commands.Cog):
         else:
             await interaction.followup.send("No attributes to reset.", ephemeral=True)
 
+    @app_commands.command(name="remove", description="Remove attributes from your stats")
+    @app_commands.describe(items="Comma-separated attribute names to remove, e.g., 'HP, MP, 临时技能'")
+    async def remove_slash(self, interaction: discord.Interaction, items: str) -> None:
+        await interaction.response.defer(ephemeral=True)
+        channel = interaction.channel
+        user = interaction.user
+        if channel is None or user is None:
+            await interaction.followup.send("Channel or user not found.", ephemeral=True)
+            return
+        
+        items = (items or "").strip()
+        if not items:
+            await interaction.followup.send("No attributes specified.", ephemeral=True)
+            return
+        
+        # 解析要删除的属性名列表
+        attr_names = [name.strip() for name in re.split(r"[，,]+", items) if name.strip()]
+        if not attr_names:
+            await interaction.followup.send("No attributes specified.", ephemeral=True)
+            return
+        
+        # 获取用户属性
+        attrs = self._get_user_attrs(channel.id, user.id)
+        if not attrs:
+            await interaction.followup.send("No attributes set.", ephemeral=True)
+            return
+        
+        # 删除指定的属性
+        removed: list[str] = []
+        not_found: list[str] = []
+        
+        for name in attr_names:
+            key, label = self._normalize_attr_name(name)
+            # 不允许删除 NAME 属性，使用 /nn 来管理
+            if key == self._normalize_attr_name("NAME")[0]:
+                not_found.append(f"{label} (use /nn to change name)")
+                continue
+            
+            if key in attrs:
+                del attrs[key]
+                removed.append(label)
+            else:
+                not_found.append(label)
+        
+        # 构建反馈消息
+        messages = []
+        if removed:
+            messages.append(f"Removed: {', '.join(removed)}")
+        if not_found:
+            messages.append(f"Not found: {', '.join(not_found)}")
+        
+        if messages:
+            await interaction.followup.send("\n".join(messages), ephemeral=True)
+        else:
+            await interaction.followup.send("No attributes were removed.", ephemeral=True)
+
     # ---------------- CoC7 Character Generation Commands ----------------
     @app_commands.command(name="cs", description="Generate CoC7 base attributes (including Luck) and totals")
     async def cs_slash(self, interaction: discord.Interaction) -> None:
@@ -753,88 +820,117 @@ class CoC(commands.Cog):
                 pass
         await ctx.send("Shadows stir... A secret roll has been cast beyond the veil.")
 
-    @commands.command(name="stats", help="Show your attributes in this channel. Usage: .stats")
-    async def stats_text(self, ctx: commands.Context) -> None:
+    @commands.command(name="stats", help="Show your attributes in this channel. Usage: .stats. Support @mention")
+    async def stats_text(self, ctx: commands.Context, *, arg: str | None = None) -> None:
         channel = ctx.channel
-        author = ctx.author
-        if channel is None or author is None:
+        if channel is None:
             return
-        attrs = self._get_user_attrs(channel.id, author.id)
-        if not attrs:
-            await ctx.send("No attributes set.")
-            return
-        name_key = self._normalize_attr_name("NAME")[0]
-        name_meta = attrs.get(name_key)
-        if name_meta is not None:
-            display_name = str(name_meta.get("value", "")).strip() or (
-                author.display_name if isinstance(author, discord.Member) else getattr(author, "name", "user")
-            )
-        else:
-            display_name = author.display_name if isinstance(author, discord.Member) else getattr(author, "name", "user")
-        # 正文中不包含 NAME
-        filtered = {k: v for k, v in attrs.items() if k != self._normalize_attr_name("NAME")[0]}
-        pretty = self._format_stats_columns_block(filtered, columns=3)
-        await ctx.send(f"Stats of {display_name}\n{pretty}")
+        
+        # 提取 mentions
+        arg = (arg or "").strip()
+        mentions, _ = self._extract_mentions_and_clean_arg(ctx, arg)
+        target_users = mentions if mentions else [ctx.author]
+        
+        # 对每个目标用户显示属性
+        results = []
+        for user in target_users:
+            attrs = self._get_user_attrs(channel.id, user.id)
+            if not attrs:
+                user_display = self._get_display_name(channel.id, user)
+                results.append(f"{user_display}: No attributes set.")
+                continue
+            # 显示名：使用统一格式
+            display_name = self._get_display_name(channel.id, user)
+            # 正文中不包含 NAME
+            filtered = {k: v for k, v in attrs.items() if k != self._normalize_attr_name("NAME")[0]}
+            pretty = self._format_stats_columns_block(filtered, columns=3)
+            results.append(f"Stats of {display_name}\n{pretty}")
+        
+        await ctx.send("\n\n".join(results))
 
-    @commands.command(name="set", help="Batch set attributes. Usage: .set Name Value, Name2 Value2")
+    @commands.command(name="set", help="Batch set attributes. Usage: .set Name Value, Name2 Value2. Support @mention")
     async def set_text(self, ctx: commands.Context, *, items: str | None = None) -> None:
         channel = ctx.channel
-        author = ctx.author
-        if channel is None or author is None:
+        if channel is None:
             return
+        
         items = (items or "").strip()
         if not items:
             await ctx.send("Nothing to set.")
             return
+        
+        # 提取 mentions 并清理参数
+        mentions, cleaned_items = self._extract_mentions_and_clean_arg(ctx, items)
+        target_users = mentions if mentions else [ctx.author]
+        
         try:
-            pairs = self._parse_set_items(items)
+            pairs = self._parse_set_items(cleaned_items)
         except ValueError as exc:
             await ctx.send(str(exc))
             return
         if not pairs:
             await ctx.send("Nothing to set.")
             return
-        store = self._get_user_attrs(channel.id, author.id)
-        for name, value in pairs:
-            key, label = self._normalize_attr_name(name)
-            store[key] = {"label": label, "value": int(value)}
-        summary = ", ".join([f"{self._normalize_attr_name(n)[1]}={int(v)}" for n, v in pairs])
-        await ctx.send(f"Set: {summary}")
+        
+        # 对每个目标用户设置属性
+        results = []
+        for user in target_users:
+            store = self._get_user_attrs(channel.id, user.id)
+            for name, value in pairs:
+                key, label = self._normalize_attr_name(name)
+                store[key] = {"label": label, "value": int(value)}
+            summary = ", ".join([f"{self._normalize_attr_name(n)[1]}={int(v)}" for n, v in pairs])
+            user_display = self._get_display_name(channel.id, user)
+            results.append(f"{user_display}: Set {summary}")
+        
+        await ctx.send("\n".join(results))
 
-    @commands.command(name="add", help="Batch add deltas. Usage: .add Name Delta, Name2 Delta2")
+    @commands.command(name="add", help="Batch add deltas. Usage: .add Name Delta, Name2 Delta2. Support @mention")
     async def add_text(self, ctx: commands.Context, *, items: str | None = None) -> None:
         channel = ctx.channel
-        author = ctx.author
-        if channel is None or author is None:
+        if channel is None:
             return
+        
         items = (items or "").strip()
         if not items:
             await ctx.send("Nothing to add.")
             return
+        
+        # 提取 mentions 并清理参数
+        mentions, cleaned_items = self._extract_mentions_and_clean_arg(ctx, items)
+        target_users = mentions if mentions else [ctx.author]
+        
         try:
-            pairs = self._parse_set_items(items)
+            pairs = self._parse_set_items(cleaned_items)
         except ValueError as exc:
             await ctx.send(str(exc))
             return
         if not pairs:
             await ctx.send("Nothing to add.")
             return
-        store = self._get_user_attrs(channel.id, author.id)
-        summary_items: list[str] = []
-        for name, delta in pairs:
-            key, label = self._normalize_attr_name(name)
-            meta = store.get(key)
-            curr_val = 0
-            if meta is not None:
-                try:
-                    curr_val = int(meta.get("value", 0))
-                except Exception:
-                    curr_val = 0
-            new_val = int(curr_val) + int(delta)
-            store[key] = {"label": label, "value": int(new_val)}
-            summary_items.append(f"{label}{'+' if int(delta) >= 0 else ''}{int(delta)} => {int(new_val)}")
-        summary = ", ".join(summary_items)
-        await ctx.send(f"Add: {summary}")
+        
+        # 对每个目标用户增加属性
+        results = []
+        for user in target_users:
+            store = self._get_user_attrs(channel.id, user.id)
+            summary_items: list[str] = []
+            for name, delta in pairs:
+                key, label = self._normalize_attr_name(name)
+                meta = store.get(key)
+                curr_val = 0
+                if meta is not None:
+                    try:
+                        curr_val = int(meta.get("value", 0))
+                    except Exception:
+                        curr_val = 0
+                new_val = int(curr_val) + int(delta)
+                store[key] = {"label": label, "value": int(new_val)}
+                summary_items.append(f"{label}{'+' if int(delta) >= 0 else ''}{int(delta)} => {int(new_val)}")
+            summary = ", ".join(summary_items)
+            user_display = self._get_display_name(channel.id, user)
+            results.append(f"{user_display}: Add {summary}")
+        
+        await ctx.send("\n".join(results))
 
     @commands.command(name="reset", help="Reset your attributes in this channel. Usage: .reset")
     async def reset_text(self, ctx: commands.Context) -> None:
@@ -847,6 +943,64 @@ class CoC(commands.Cog):
             await ctx.send("Reset done.")
         else:
             await ctx.send("No attributes to reset.")
+
+    @commands.command(name="remove", help="Remove attributes from your stats. Usage: .remove Name1, Name2")
+    async def remove_text(self, ctx: commands.Context, *, items: str | None = None) -> None:
+        channel = ctx.channel
+        author = ctx.author
+        if channel is None or author is None:
+            return
+        
+        items = (items or "").strip()
+        if not items:
+            await ctx.send("Usage: .remove Name1, Name2")
+            return
+        
+        # 检查是否包含 mention，如果有则报错
+        if ctx.message.mentions:
+            await ctx.send("Error: .remove command can only be used on yourself.")
+            return
+        
+        # 解析要删除的属性名列表
+        attr_names = [name.strip() for name in re.split(r"[，,]+", items) if name.strip()]
+        if not attr_names:
+            await ctx.send("No attributes specified.")
+            return
+        
+        # 获取用户属性
+        attrs = self._get_user_attrs(channel.id, author.id)
+        if not attrs:
+            await ctx.send("No attributes set.")
+            return
+        
+        # 删除指定的属性
+        removed: list[str] = []
+        not_found: list[str] = []
+        
+        for name in attr_names:
+            key, label = self._normalize_attr_name(name)
+            # 不允许删除 NAME 属性，使用 .nn 来管理
+            if key == self._normalize_attr_name("NAME")[0]:
+                not_found.append(f"{label} (use .nn to change name)")
+                continue
+            
+            if key in attrs:
+                del attrs[key]
+                removed.append(label)
+            else:
+                not_found.append(label)
+        
+        # 构建反馈消息
+        messages = []
+        if removed:
+            messages.append(f"Removed: {', '.join(removed)}")
+        if not_found:
+            messages.append(f"Not found: {', '.join(not_found)}")
+        
+        if messages:
+            await ctx.send("\n".join(messages))
+        else:
+            await ctx.send("No attributes were removed.")
 
     @commands.command(name="cs", help="Generate CoC7 base attributes and totals. Usage: .cs")
     async def cs_text(self, ctx: commands.Context) -> None:
@@ -887,66 +1041,86 @@ class CoC(commands.Cog):
         if not name:
             await ctx.send("Usage: .nn <name>")
             return
+        
+        # 检查是否包含 mention，如果有则报错
+        if ctx.message.mentions:
+            await ctx.send("Error: .nn command can only be used on yourself.")
+            return
+        
         store = self._get_user_attrs(channel.id, author.id)
         key, label = self._normalize_attr_name("NAME")
         store[key] = {"label": label, "value": name}
         await ctx.send(f"Name set to: {name}")
 
     # 文本命令：`.check 60`
-    @commands.command(name="check", aliases=["ra"], help="CoC d100 check. Usage: .check <number|attr name> or .ra <number|attr name>")
+    @commands.command(name="check", aliases=["ra"], help="CoC d100 check. Usage: .check <number|attr name> or .ra <number|attr name>. Support @mention")
     async def coc_check_text(self, ctx: commands.Context, *, arg: str | None = None) -> None:
         arg = (arg or "").strip()
         if not arg:
             await ctx.send("Usage: .check <number|attr name> or .ra <number|attr name>")
             return
+
+        channel = ctx.channel
+        if channel is None:
+            return
+        
+        # 提取 mentions 并清理参数
+        mentions, cleaned_arg = self._extract_mentions_and_clean_arg(ctx, arg)
+        target_users = mentions if mentions else [ctx.author]
+        
         # number path
-        m = re.match(r"^\s*(\d+)\s*$", arg)
+        m = re.match(r"^\s*(\d+)\s*$", cleaned_arg)
         if m:
             target = int(m.group(1))
             if not (1 <= target <= 100):
                 await ctx.send("Out of range: require 1 <= target <= 100.")
                 return
+            # 对每个目标用户执行判定
+            results = []
+            for user in target_users:
+                roll, outcome = self._coc_check(target)
+                user_display = self._get_display_name(channel.id, user)
+                results.append(f"{user_display}: {roll}/{target} -> {outcome}")
+            await ctx.send("\n".join(results))
+            return
+        
+        # 对每个目标用户执行判定
+        results = []
+        for user in target_users:
+            attrs = self._get_user_attrs(channel.id, user.id)
+            key, _label_req = self._normalize_attr_name(cleaned_arg)
+            meta = attrs.get(key)
+            if not meta:
+                user_display = self._get_display_name(channel.id, user)
+                results.append(f"{user_display}: Attribute not found. Use .set to define it.")
+                continue
+            label = str(meta.get("label", cleaned_arg))
+            try:
+                target = int(meta.get("value", 0))
+            except Exception:
+                user_display = self._get_display_name(channel.id, user)
+                results.append(f"{user_display}: Attribute value is invalid.")
+                continue
+            target = max(1, min(100, target))
             roll, outcome = self._coc_check(target)
-            await ctx.send(f"{roll}/{target} -> {outcome}")
-            return
+            # 显示名：使用统一格式
+            display_name = self._get_display_name(channel.id, user)
+            results.append(f"[{label}] check of {display_name}:\n{roll}/{target} -> {outcome}")
+        
+        await ctx.send("\n\n".join(results))
 
-        # attribute path
-        channel = ctx.channel
-        author = ctx.author
-        if channel is None or author is None:
-            return
-        attrs = self._get_user_attrs(channel.id, author.id)
-        key, _label_req = self._normalize_attr_name(arg)
-        meta = attrs.get(key)
-        if not meta:
-            await ctx.send("Attribute not found. Use .set to define it.")
-            return
-        label = str(meta.get("label", arg))
-        try:
-            target = int(meta.get("value", 0))
-        except Exception:
-            await ctx.send("Attribute value is invalid.")
-            return
-        target = max(1, min(100, target))
-        roll, outcome = self._coc_check(target)
-        # 显示名：优先 NAME 属性
-        name_key = self._normalize_attr_name("NAME")[0]
-        name_meta = attrs.get(name_key)
-        if name_meta is not None:
-            display_name = str(name_meta.get("value", "")).strip() or (
-                ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
-            )
-        else:
-            display_name = ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
-        await ctx.send(f"[{label}] check of {display_name}:\n{roll}/{target} -> {outcome}")
-
-    @commands.command(name="sc", help="Sanity check. Usage: .sc succ_expr/fail_expr")
+    @commands.command(name="sc", help="Sanity check. Usage: .sc succ_expr/fail_expr. Support @mention")
     async def sc_text(self, ctx: commands.Context, *, loss: str | None = None) -> None:
         loss = (loss or "").strip()
         if not loss:
             await ctx.send("Usage: .sc succ_expr/fail_expr")
             return
-        parts = loss.split("/", 1)
+        
+        # 提取 mentions 并清理参数
+        mentions, cleaned_loss = self._extract_mentions_and_clean_arg(ctx, loss)
+        target_users = mentions if mentions else [ctx.author]
+        
+        parts = cleaned_loss.split("/", 1)
         if len(parts) != 2:
             await ctx.send("Invalid format. Use 'succ_expr/fail_expr'.")
             return
@@ -957,108 +1131,120 @@ class CoC(commands.Cog):
             return
 
         channel = ctx.channel
-        author = ctx.author
-        if channel is None or author is None:
+        if channel is None:
             return
-        attrs = self._get_user_attrs(channel.id, author.id)
-        san_meta = attrs.get(self._normalize_attr_name("Sanity")[0])
-        if not san_meta:
-            await ctx.send("Attribute 'Sanity' not found. Use .set to define it.")
-            return
-        try:
-            san_val = int(san_meta.get("value", 0))
-        except Exception:
-            await ctx.send("Attribute 'Sanity' value is invalid.")
-            return
-        target = max(1, min(100, san_val))
+        
+        # 对每个目标用户执行理智检定
+        results = []
+        for user in target_users:
+            attrs = self._get_user_attrs(channel.id, user.id)
+            san_meta = attrs.get(self._normalize_attr_name("Sanity")[0])
+            if not san_meta:
+                user_display = self._get_display_name(channel.id, user)
+                results.append(f"{user_display}: Attribute 'Sanity' not found. Use .set to define it.")
+                continue
+            try:
+                san_val = int(san_meta.get("value", 0))
+            except Exception:
+                user_display = self._get_display_name(channel.id, user)
+                results.append(f"{user_display}: Attribute 'Sanity' value is invalid.")
+                continue
+            target = max(1, min(100, san_val))
 
-        roll = random.randint(1, 100)
-        is_success = roll <= target
-        chosen_expr = succ_expr if is_success else fail_expr
-        try:
-            loss_total, details = self._roll_expression(chosen_expr)
-        except ValueError as exc:
-            await ctx.send(str(exc))
-            return
+            roll = random.randint(1, 100)
+            is_success = roll <= target
+            chosen_expr = succ_expr if is_success else fail_expr
+            try:
+                loss_total, details = self._roll_expression(chosen_expr)
+            except ValueError as exc:
+                user_display = self._get_display_name(channel.id, user)
+                results.append(f"{user_display}: {str(exc)}")
+                continue
 
-        new_san = max(0, san_val - max(0, loss_total))
-        san_key, san_label = self._normalize_attr_name(str(san_meta.get("label", "Sanity")))
-        attrs[san_key] = {"label": san_label, "value": int(new_san)}
+            new_san = max(0, san_val - max(0, loss_total))
+            san_key, san_label = self._normalize_attr_name(str(san_meta.get("label", "Sanity")))
+            attrs[san_key] = {"label": san_label, "value": int(new_san)}
 
-        # 显示名：优先 NAME 属性
-        name_key = self._normalize_attr_name("NAME")[0]
-        name_meta = attrs.get(name_key)
-        if name_meta is not None:
-            display_name = str(name_meta.get("value", "")).strip() or (
-                ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
+            # 显示名：使用统一格式
+            display_name = self._get_display_name(channel.id, user)
+
+            outcome = "success" if is_success else "failure"
+            extra = f" | {'; '.join(details)}" if details else ""
+            ti_note = "\n[Temporary Insanity] One-time Sanity loss >= 5. Use /ti or .ti." if loss_total >= 5 else ""
+            results.append(
+                f"Sanity Check of {display_name}:\n"
+                f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | Sanity: {san_val} -> {new_san}{ti_note}"
             )
-        else:
-            display_name = ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
+        
+        await ctx.send("\n\n".join(results))
 
-        outcome = "success" if is_success else "failure"
-        extra = f" | {'; '.join(details)}" if details else ""
-        ti_note = "\n[Temporary Insanity] One-time Sanity loss >= 5. Use /ti or .ti." if loss_total >= 5 else ""
-        await ctx.send(
-            f"Sanity Check of {display_name}:\n"
-            f"SC {roll}/{target} [{san_label}] -> {outcome} | loss: {chosen_expr} -> {loss_total}{extra} | Sanity: {san_val} -> {new_san}{ti_note}"
-        )
-
-    @commands.command(name="growth", help="Growth check. Usage: .growth <number|attr name>")
+    @commands.command(name="growth", help="Growth check. Usage: .growth <number|attr name>. Support @mention")
     async def growth_text(self, ctx: commands.Context, *, arg: str | None = None) -> None:
         arg = (arg or "").strip()
         if not arg:
             await ctx.send("Usage: .growth <number|attr name>")
             return
+        
+        # 提取 mentions 并清理参数
+        mentions, cleaned_arg = self._extract_mentions_and_clean_arg(ctx, arg)
+        target_users = mentions if mentions else [ctx.author]
+
+        channel = ctx.channel
+        if channel is None:
+            return
+        
         # number path
-        m = re.match(r"^\s*(\d+)\s*$", arg)
+        m = re.match(r"^\s*(\d+)\s*$", cleaned_arg)
         if m:
             target = int(m.group(1))
             if not (1 <= target <= 100):
                 await ctx.send("Out of range: require 1 <= target <= 100.")
                 return
-            roll, outcome = self._coc_check(target)
-            is_success = outcome in {"critical success", "extreme success", "hard success", "success"}
-            if is_success:
-                await ctx.send(f"Growth Check: {roll}/{target} -> Failed")
-            else:
-                growth = random.randint(1, 10)
-                await ctx.send(f"Growth Check: {roll}/{target} -> Passed \nGrowth value: 1d10 -> {growth}")
+            # 对每个目标用户执行成长检定
+            results = []
+            for user in target_users:
+                roll, outcome = self._coc_check(target)
+                is_success = outcome in {"critical success", "extreme success", "hard success", "success"}
+                user_display = self._get_display_name(channel.id, user)
+                if is_success:
+                    results.append(f"{user_display}: Growth Check {roll}/{target} -> Failed")
+                else:
+                    growth = random.randint(1, 10)
+                    results.append(f"{user_display}: Growth Check {roll}/{target} -> Passed | Growth value: 1d10 -> {growth}")
+            await ctx.send("\n".join(results))
             return
 
         # attribute path
-        channel = ctx.channel
-        author = ctx.author
-        if channel is None or author is None:
-            return
-        attrs = self._get_user_attrs(channel.id, author.id)
-        key, _label_req = self._normalize_attr_name(arg)
-        meta = attrs.get(key)
-        if not meta:
-            await ctx.send("Attribute not found. Use .set to define it.")
-            return
-        label = str(meta.get("label", arg))
-        try:
-            target = int(meta.get("value", 0))
-        except Exception:
-            await ctx.send("Attribute value is invalid.")
-            return
-        target = max(1, min(100, target))
-        roll, outcome = self._coc_check(target)
-        # 显示名：优先 NAME 属性
-        name_key = self._normalize_attr_name("NAME")[0]
-        name_meta = attrs.get(name_key)
-        if name_meta is not None:
-            display_name = str(name_meta.get("value", "")).strip() or (
-                ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
-            )
-        else:
-            display_name = ctx.author.display_name if isinstance(ctx.author, discord.Member) else getattr(ctx.author, "name", "user")
-        is_success = outcome in {"critical success", "extreme success", "hard success", "success"}
-        if is_success:
-            await ctx.send(f"[{label}] growth of {display_name}:\n{roll}/{target} -> {outcome}\nGrowth failed.")
-        else:
-            growth = random.randint(1, 10)
-            await ctx.send(f"[{label}] growth of {display_name}:\n{roll}/{target} -> {outcome}\nGrowth value: 1d10 -> {growth}")
+        
+        # 对每个目标用户执行成长检定
+        results = []
+        for user in target_users:
+            attrs = self._get_user_attrs(channel.id, user.id)
+            key, _label_req = self._normalize_attr_name(cleaned_arg)
+            meta = attrs.get(key)
+            if not meta:
+                user_display = self._get_display_name(channel.id, user)
+                results.append(f"{user_display}: Attribute not found. Use .set to define it.")
+                continue
+            label = str(meta.get("label", cleaned_arg))
+            try:
+                target = int(meta.get("value", 0))
+            except Exception:
+                user_display = self._get_display_name(channel.id, user)
+                results.append(f"{user_display}: Attribute value is invalid.")
+                continue
+            target = max(1, min(100, target))
+            roll, outcome = self._coc_check(target)
+            # 显示名：使用统一格式
+            display_name = self._get_display_name(channel.id, user)
+            is_success = outcome in {"critical success", "extreme success", "hard success", "success"}
+            if is_success:
+                results.append(f"[{label}] growth of {display_name}:\n{roll}/{target} -> {outcome}\nGrowth failed.")
+            else:
+                growth = random.randint(1, 10)
+                results.append(f"[{label}] growth of {display_name}:\n{roll}/{target} -> {outcome}\nGrowth value: 1d10 -> {growth}")
+        
+        await ctx.send("\n\n".join(results))
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(CoC(bot))
